@@ -21,6 +21,32 @@ in
   options.nix.linux-builder = {
     enable = mkEnableOption "Linux builder";
 
+    onDemand = {
+      enable = mkEnableOption ''
+        Enable launchd socket activation for the Linux builder.
+
+        This allows the Linux builder to start on-demand when a build is
+        requested. The builder will be stopped after a period of inactivity
+        defined by `lingerMinutes`.
+
+        By default, the VM will run all the time as a daemon in the background.  This allows Linux
+        builds to start right away, but means the VM is always consuming RAM (and a bit of CPU).
+      '';
+
+      lingerMinutes = mkOption {
+        type = types.ints.positive;
+        default = 180;
+        description = ''
+          The `onDemand=true, the number of minutes the Linux builder will wait before shutting down
+          after the last build.
+
+          If startup is fast enough for your taste, a very short linger time of e.g. 10 minutes will
+          free up builder resources when not in use. This allows you to commit a far greater percentage
+          of your RAM and CPUs to the builder, to allow you to build bigger packages faster.
+        '';
+      };
+    };
+
     package = mkOption {
       type = types.package;
       default = pkgs.darwin.linux-builder;
@@ -172,6 +198,9 @@ in
   };
 
   config =
+    let
+      sshPort = 31022;
+    in
     mkIf cfg.enable {
       assertions = [
         {
@@ -205,9 +234,16 @@ in
         '';
 
         serviceConfig = {
-          KeepAlive = true;
-          RunAtLoad = true;
+          KeepAlive = !cfg.onDemand.enable;
+          RunAtLoad = !cfg.onDemand.enable;
           WorkingDirectory = cfg.workingDirectory;
+
+          Sockets.Listener = optionalAttrs cfg.onDemand.enable {
+            SockFamily = "IPv4";
+            SockNodeName = "localhost";
+            SockServiceName = toString sshPort;
+          };
+
         };
       };
 
@@ -216,7 +252,7 @@ in
           User builder
           Hostname localhost
           HostKeyAlias linux-builder
-          Port 31022
+          Port ${toString sshPort}
           IdentityFile /etc/nix/builder_ed25519
       '';
 
